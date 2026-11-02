@@ -1,0 +1,78 @@
+# delege — delegate small coding tasks to headless OpenCode 2 agents on local or free cloud models.
+#
+#   pip install git+https://github.com/jcherfils/delege            # the tool
+#   pip install "delege[keyring] @ git+https://github.com/jcherfils/delege"   # + the OS keyring for API keys
+#   pip install -e .[dev]                                           # tests, lint
+
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "delege"
+dynamic = ["version"]
+description = "Delegate small, well-scoped coding tasks to headless OpenCode 2 agents on local (Ollama) or free cloud models, spread over your machines."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Jean-Marc Cherfils" }]
+keywords = ["opencode", "ollama", "agents", "delegation", "github-issues", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX",
+    "Environment :: Console",
+    "Topic :: Software Development",
+]
+dependencies = []                    # standard library only
+
+[project.optional-dependencies]
+keyring = ["keyring>=24"]            # API keys in the OS keyring instead of a 0600 file
+images = ["pillow>=10"]              # `delege check-images` without OpenCV
+dev = ["pytest>=8", "ruff>=0.6", "pyyaml>=6", "pillow>=10"]
+
+[project.scripts]
+delege = "delege.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jcherfils/delege"
+Changelog = "https://github.com/jcherfils/delege/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "delege/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["delege"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"template" = "delege/template"       # what `delege init` copies (also usable by hand: cp -r template/. <repo>)
+
+[tool.hatch.build.targets.sdist]
+include = ["delege", "template", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.ruff]
+# `ruff check delege tests` must stay clean. No formatter: the code keeps its hand-made layout.
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# F pyflakes, E/W pycodestyle errors, B bugbear, BLE blind except, UP pyupgrade, SIM / RUF simplifications and
+# checks, S110 a bare `except Exception: pass` (log it once through `delege.util.warn_once`, or catch precisely).
+select = ["F", "E", "W", "B", "BLE", "UP", "SIM", "RUF", "S110"]
+ignore = [
+    "E501",    # long help texts and tables: the 120 columns are a guide, not a rule
+    "E702",    # several short statements on one line
+    "E741",    # `l` in short loops
+    "B905",    # zip() without strict=
+    "SIM102", "SIM105", "SIM108", "SIM114", "SIM300",
+    "RUF001", "RUF002", "RUF003",       # typographic quotes, ellipses and arrows in texts (on purpose)
+    "RUF005", "RUF007", "RUF012", "RUF015", "RUF022", "RUF046", "SIM905",
+    "UP040", "UP046", "UP047", "UP049", # PEP 695 syntax: Python 3.11 is supported
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF059"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
