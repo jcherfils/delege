@@ -1,0 +1,53 @@
+# delege: which agents may change what, and what proves their work.  https://github.com/jcherfils/delege
+# Run `delege init` again after changing it: the agents' OpenCode permissions (.opencode/agents/*.md) are
+# generated from the areas and the forbidden paths below.
+
+[project]
+name = "myproject"
+repo = "owner/myproject"                   # GitHub owner/name: the open issues labelled `delegate` are the tasks
+base = "main"                      # the branch the worktrees start from; never pushed by delege
+# label = "delegate"
+# max_file_bytes = 2000000         # a pushed file larger than this is refused
+rules = """
+- Caches and data only under the user's home folder, never in the repository.
+"""
+
+[forbidden]
+# never committed nor pushed (the default list covers models, arrays, videos, audio)
+suffixes = [".pt", ".pth", ".ckpt", ".onnx", ".safetensors", ".npz", ".npy", ".bin", ".gguf", ".pkl", ".h5",
+            ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wav", ".mp3"]
+# images: only an agent with `media = true`, inside its area; never pushed by delege
+media_suffixes = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"]
+dir_names = []                     # folders of that name anywhere: never read by agents, never committed
+file_names = []
+paths = []                         # repository-relative folders (datasets, secrets)
+
+# Each agent: `areas` (globs; `*` matches `/` too), `proof` (commands delege runs in the worktree after the agent;
+# placeholders {python} {delege} {issue} {changed} {changed:GLOB|GLOB} — see the README), `cost` (relative
+# time, for the plan), `strong` (goes to the strongest cloud model), `media`, `shell` (commands the agent may run
+# besides the read-only ones), `webfetch` (URL patterns it may fetch), `steps`.
+
+[agents.tests]
+description = "Adds pytest tests for one module (no change to the module itself)"
+areas = ["tests/*"]
+proof = ["{python} -m pytest -q -p no:cacheprovider {changed:tests/*test_*.py}"]
+shell = ["python -m pytest *", "ruff check *"]
+
+[agents.fix]
+description = "Fixes one small, well-described bug or gap, with a test that proves it"
+areas = ["myproject/*", "src/*", "tests/*"]
+proof = ["ruff check {changed:*.py}", "{python} -m pytest -q -p no:cacheprovider {changed:tests/*test_*.py!}"]
+cost = 1.5
+strong = true
+shell = ["python -m pytest *", "ruff check *"]
+
+[agents.lint]
+description = "Fixes ruff findings in one area, no behaviour change"
+areas = ["*.py"]
+proof = ["ruff check --select F {changed:*.py}"]
+shell = ["python -m pytest *", "ruff check *"]
+
+[agents.docs]
+description = "Updates documentation from the code"
+areas = ["README.md", "docs/*.md"]
+cost = 0.5
