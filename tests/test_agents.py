@@ -198,3 +198,28 @@ def test_parse_json_output():
     assert ev["steps"] == 2 and ev["input"] == 162 and ev["output"] == 26
     assert ev["text"] == "Changed: x\nnot json at all" and ev["error"] == "Rate limit exceeded" and ev["status"] == 429
     assert opencode.parse_json_output("") == {"steps": 0, "input": 0, "output": 0, "text": "", "error": "", "status": None}
+
+
+def test_fifoo_example_config_parses(tmp_path):
+    """``examples/fifoo.delege.toml``: FiFoo's seven agents, its dataset folders and files; the generated rules
+    deny the dataset folders and let only the licences agent fetch model-card sites."""
+    import tomllib
+    data = tomllib.loads((ROOT / "examples" / "fifoo.delege.toml").read_text())
+    p = project.parse(data, tmp_path, tmp_path / "delege.toml")
+    assert list(p.agents) == ["checks", "tests", "fix", "lint", "docs", "licences", "screenshots"]
+    assert p.repo == "jcherfils/FiFoo" and p.forbidden.dir_names == ("videos", "_dataset", "avatars")
+    assert "result.json" in p.forbidden.file_names and ".safetensors" in p.forbidden.suffixes
+    assert p.agents["screenshots"].media and p.agents["fix"].strong and p.agents["checks"].strong
+    for name, a in p.agents.items():
+        rules = [{"action": x, "resource": y, "effect": z} for x, y, z in init.permissions(a, p)]
+        assert decide(rules, "read", "/home/jm/FiFoo/data/videos/a/result.json") == "deny"
+        hf = "https://huggingface.co/org/model/blob/main/LICENSE"
+        assert decide(rules, "webfetch", hf) == ("allow" if name == "licences" else "deny"), name
+        assert decide(rules, "shell", "git push") == "deny"
+    shots = [{"action": x, "resource": y, "effect": z} for x, y, z in init.permissions(p.agents["screenshots"], p)]
+    assert decide(shots, "shell", 'xvfb-run -a -s "-screen 0 1920x1200x24" python docs/make_screenshots.py') == "allow"
+    assert decide(shots, "shell", "xvfb-run -a bash") == "deny"
+    from delege.checks import task_violations
+    from delege.tasks import Task
+    assert task_violations(["docs/screens/a.png"], Task("1", "screenshots", "x"), p) == []
+    assert task_violations(["fifoo/x.py", "videos/a.mp4"], Task("1", "tests", "x"), p)

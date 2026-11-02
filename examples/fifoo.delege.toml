@@ -1,0 +1,82 @@
+# FiFoo's delege configuration (https://github.com/jcherfils/FiFoo): copy it to the repository root as delege.toml,
+# then `delege init` regenerates .opencode/agents/*.md (their OpenCode 2 permissions) from it. The agents' bodies
+# (their instructions) are kept when the files exist.
+
+[project]
+name = "FiFoo"
+repo = "jcherfils/FiFoo"
+base = "main"
+rules = """
+- Never mention a certain 3D suite by name (the repository forbids it); say "3D software" if you must.
+- Never add trained models, dataset content, images or videos to the repository (`*.pt`, `*.onnx`,
+  `*.safetensors`, `*.npz`, `*.npy`, frames, masks, labels, files from a dataset folder) — except the screenshots
+  agent, for `docs/screens/`.
+- Caches and data only under `~/.fifoo` (FiFoo's folder): never write into `/tmp` or the repository for caches.
+- AGENTS.md's push / commit rules are for interactive sessions; here delege does that part.
+"""
+
+[forbidden]
+# models and arrays, videos and audio: never committed nor pushed
+suffixes = [".pt", ".pth", ".ckpt", ".onnx", ".safetensors", ".npz", ".npy", ".bin", ".gguf", ".engine", ".tflite",
+            ".pkl", ".pickle", ".h5", ".mlmodel", ".pb",
+            ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpg", ".mpeg", ".wav", ".mp3"]
+# images: only the screenshots agent, in docs/screens/; never pushed by delege (the owner looks at them first)
+media_suffixes = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".exr"]
+# dataset folders (README › Data locations): never read by the agents, never committed
+dir_names = ["videos", "_dataset", "avatars"]
+# what a FiFoo dataset folder holds
+file_names = ["graph.json", "evidence.json", "people.json", "labels.json", "identities.json", "video.json",
+              "result.json", "meta.json"]
+paths = []
+
+[agents.checks]
+description = "Writes or runs the check of one GitHub issue (python -m fifoo.checks N)"
+areas = ["fifoo/checks/*", "tests/test_checks*.py"]
+proof = ["{python} -m fifoo.checks {issue}"]
+strong = true
+shell = ["python -m fifoo.checks *", "python -m pytest *", "xvfb-run -a python -m pytest *", "ruff check *"]
+prompt = "The check to write or run: python -m fifoo.checks {issue}"
+
+[agents.tests]
+description = "Adds pytest tests for one FiFoo module (no change to the module itself)"
+areas = ["tests/*"]
+proof = ["{python} -m pytest -q -p no:cacheprovider {changed:tests/*test_*.py}"]
+shell = ["python -m pytest *", "xvfb-run -a python -m pytest *", "ruff check *"]
+
+[agents.fix]
+description = "Fixes one small, well-described bug or gap in FiFoo code, with a test that proves it"
+areas = ["fifoo/*", "tests/*"]
+proof = ["ruff check {changed:*.py}", "{python} -m pytest -q -p no:cacheprovider {changed:tests/*test_*.py!}"]
+cost = 1.5
+strong = true
+shell = ["python -m pytest *", "xvfb-run -a python -m pytest *", "ruff check *"]
+
+[agents.lint]
+description = "Fixes ruff findings in one area, no behaviour change"
+areas = ["fifoo/*.py", "tests/*.py", "docs/*.py", "tools/*.py", "install.py"]
+proof = ["ruff check --select F {changed:*.py}"]
+shell = ["python -m pytest *", "xvfb-run -a python -m pytest *", "ruff check *"]
+
+[agents.docs]
+description = "Updates README / HUMANS rows and docs/*.md from the code"
+areas = ["README.md", "HUMANS.md", "docs/*.md"]
+cost = 0.5
+
+[agents.licences]
+description = "Fills one licence record (fifoo/licences.py Component and its HUMANS.md row) from the source page"
+areas = ["fifoo/licences.py", "HUMANS.md"]
+proof = ["{python} -m pytest -q -p no:cacheprovider tests/test_licences.py"]
+cost = 0.5
+shell = ["python -m pytest *", "ruff check *"]
+webfetch = ["https://huggingface.co/*", "https://github.com/*", "https://raw.githubusercontent.com/*",
+            "https://ollama.com/*", "https://registry.ollama.ai/*", "https://pypi.org/*", "https://arxiv.org/*",
+            "https://spdx.org/*", "https://opensource.org/*", "https://creativecommons.org/*"]
+
+[agents.screenshots]
+description = "Regenerates the README screenshots under xvfb and checks the images"
+areas = ["docs/screens/*"]
+proof = ["{delege} check-images {changed:*.png|*.jpg|*.jpeg}"]
+cost = 3.0
+media = true
+shell = ["python -m fifoo.samples *", "xvfb-run -a -s \"-screen 0 1920x1200x24\" python docs/make_screenshots.py *",
+         "python docs/make_screenshots.py *", "delege check-images *", "python -m delege check-images *"]
