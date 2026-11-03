@@ -18,6 +18,7 @@ from .doctor import ollama_status
 from .machine import HOST_KEYS, OLLAMA_URL, host_from_json, raw_config, save_raw_config
 
 POLICY_URL = "https://github.com/jcherfils/delege#privacy"
+MAX_REQUEST_BYTES = 1_048_576
 
 
 class Settings:
@@ -186,7 +187,7 @@ function render(){
     <div class="row">${o.up?`<span class="ok">● running</span> at <code>${esc(s.ollama_url)}</code> — models: ${o.models.map(m=>"<code>"+esc(m)+"</code>").join(", ")||"none"}; loaded: ${o.loaded.map(m=>"<code>"+esc(m)+"</code>").join(", ")||"none"}`
       :`<span class="bad">● not reachable</span> at <code>${esc(s.ollama_url)}</code> <span class="mut">${esc(o.error||"")}</span>`}</div>
     <div class="row"><label>Ollama URL <input type="text" id="ollama_url" value="${esc(s.ollama_url)}" style="width:260px"></label> <button onclick="saveOllama()">Save</button> <span class="mut">run <code>delege doctor</code> for the full check</span></div></section>`;
-  h += `<section class="card"><h2 style="margin-top:0">Machines</h2><table id="hosts"><tr><th>name</th><th>ssh (user@host; empty = this machine)</th><th>slots</th><th>GPU GB</th><th>python</th><th>opencode</th><th>agents (comma)</th><th>repos (owner/name=path; …)</th><th></th></tr>`;
+  h += `<section class="card"><h2 style="margin-top:0">Machines</h2><table id="hosts"><tr><th>name</th><th>ssh (user@host; empty = this machine)</th><th>engine</th><th>slots</th><th>GPU GB</th><th>python</th><th>opencode</th><th>aider</th><th>agents (comma)</th><th>repos (owner/name=path; …)</th><th></th></tr>`;
   s.hosts.forEach((x,i)=>{ h += hostRow(x,i); });
   h += `</table><div class="row"><button onclick="addHost()">Add a machine</button><button onclick="saveHosts()">Save machines</button>
     <span class="mut">An ssh machine needs a clone of each project (<code>repos</code>, default <code>~/&lt;project&gt;</code>), OpenCode 2 and Ollama there, and key-based ssh from here.</span></div></section>`;
@@ -212,8 +213,9 @@ function render(){
 function hostRow(x,i){
   const repos = Object.entries(x.repos||{}).map(([k,v])=>k+"="+v).join("; ");
   return `<tr data-i="${i}"><td><input type="text" class="h-name" value="${esc(x.name)}" style="width:90px"></td><td><input type="text" class="h-ssh" value="${esc(x.ssh||"")}" style="width:150px"></td>
+   <td><select class="h-engine"><option value="opencode" ${x.engine!=="aider"?"selected":""}>OpenCode</option><option value="aider" ${x.engine==="aider"?"selected":""}>Aider</option></select></td>
    <td><input type="number" class="h-slots" min="1" value="${x.slots||1}" style="width:55px"></td><td><input type="number" class="h-gpu" step="0.1" value="${x.gpu_gb??""}" style="width:65px"></td>
-   <td><input type="text" class="h-python" value="${esc(x.python||"")}" style="width:120px"></td><td><input type="text" class="h-opencode" value="${esc(x.opencode||"")}" style="width:110px"></td>
+   <td><input type="text" class="h-python" value="${esc(x.python||"")}" style="width:120px"></td><td><input type="text" class="h-opencode" value="${esc(x.opencode||"")}" style="width:110px"></td><td><input type="text" class="h-aider" value="${esc(x.aider||"")}" style="width:110px"></td>
    <td><input type="text" class="h-agents" value="${esc((x.agents||[]).join(", "))}" style="width:130px"></td><td><input type="text" class="h-repos" value="${esc(repos)}" style="width:200px"></td>
    <td><button onclick="this.closest('tr').remove()">×</button></td></tr>`;
 }
@@ -222,7 +224,7 @@ async function saveHosts(){
   const hosts = [...$("#hosts").querySelectorAll("tr[data-i]")].map(tr => {
     const v = c => tr.querySelector("."+c).value.trim();
     const repos = {}; v("h-repos").split(";").map(s=>s.trim()).filter(Boolean).forEach(s=>{const [k,...r]=s.split("="); if(k&&r.length) repos[k.trim()]=r.join("=").trim();});
-    return {name:v("h-name"), ssh:v("h-ssh"), slots:+v("h-slots")||1, gpu_gb:v("h-gpu")===""?null:+v("h-gpu"), python:v("h-python"), opencode:v("h-opencode"), agents:v("h-agents"), repos};
+    return {name:v("h-name"), ssh:v("h-ssh"), engine:v("h-engine"), slots:+v("h-slots")||1, gpu_gb:v("h-gpu")===""?null:+v("h-gpu"), python:v("h-python"), opencode:v("h-opencode"), aider:v("h-aider"), agents:v("h-agents"), repos};
   });
   await api("hosts", {hosts}); say("machines saved"); load();
 }
@@ -298,8 +300,17 @@ class Server:
                 if not self._auth():
                     return
                 try:
-                    n = int(self.headers.get("Content-Length") or 0)
+                    raw_length = self.headers.get("Content-Length")
+                    if raw_length is None:
+                        return self._json(411, {"error": "Content-Length is required"})
+                    n = int(raw_length)
+                    if n < 0:
+                        return self._json(400, {"error": "invalid Content-Length"})
+                    if n > MAX_REQUEST_BYTES:
+                        return self._json(413, {"error": "request body is too large"})
                     body = json.loads(self.rfile.read(n) or b"{}")
+                    if not isinstance(body, dict):
+                        return self._json(400, {"error": "request body must be a JSON object"})
                     out = srv.handle(urlsplit(self.path).path, body)
                 except (ValueError, TypeError, KeyError) as e:
                     return self._json(400, {"error": str(e)})

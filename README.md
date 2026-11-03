@@ -1,7 +1,8 @@
 # delege
 
-Delegate small, well-scoped coding tasks to headless [OpenCode 2](https://opencode.ai/v2/docs/) agents running on a
-**local model** (Ollama) or on **free cloud models**, spread over your own machines like a small cluster.
+Delegate small, well-scoped coding tasks to headless [OpenCode 2](https://opencode.ai/v2/docs/) agents or optional
+[Aider](https://aider.chat/) workers using a **local model** (Ollama), or to **free cloud models** through OpenCode,
+spread over your own machines like a small cluster.
 
 A task is a GitHub issue labelled `delegate` + `agent:<name>` (or a line in a task file). For each task delege makes
 one git worktree and one `delegate/<id>-<agent>` branch, runs `opencode run --standalone --agent <name>` in it,
@@ -9,7 +10,7 @@ one git worktree and one `delegate/<id>-<agent>` branch, runs `opencode run --st
 lint, a check), commits, pushes the branch (never the base branch, never with force, never a model / data / media
 file), comments the issue and labels it `delegate:done` or `delegate:failed`. Nothing is merged: you review.
 
-- Standard library only (Python ≥ 3.11); `git`, `gh`, OpenCode 2 and Ollama on the machines.
+- Standard library only (Python ≥ 3.11); `git`, `gh`, OpenCode 2 and Ollama on the machines. Aider is optional.
 - Project-agnostic: each repository describes its agents in a `delege.toml`; the OpenCode permissions are
   generated from it.
 - One task at a time by default; `--parallel N` over the machines; `--cloud` adds one lane per usable free hosted
@@ -24,9 +25,10 @@ pip install "delege[images] @ git+https://github.com/jcherfils/delege"          
 ```
 
 On each machine that runs agents: [Ollama](https://ollama.com) with a coder model and a 64 K context
-(`OLLAMA_CONTEXT_LENGTH=65536`, e.g. `ollama pull qwen3-coder:30b`), OpenCode 2
-(`curl -fsSL https://opencode.ai/v2/install | bash`), and [`gh`](https://cli.github.com) logged in on the machine
-that runs delege.
+(`OLLAMA_CONTEXT_LENGTH=65536`, e.g. `ollama pull qwen3-coder:30b`), OpenCode 2 for the default engine and cloud
+lanes (`curl -fsSL https://opencode.ai/v2/install | bash`), and [`gh`](https://cli.github.com) logged in on the
+machine that runs delege. To use Aider for local tasks, install it on that host with
+`python -m pip install aider-chat`.
 
 ## Quick start
 
@@ -38,9 +40,10 @@ delege plan          # the open `delegate` issues → branch, agent, machine (ru
 delege run --only 12 # one issue; then: git log -p main..delegate/12-tests
 ```
 
-Commit `delege.toml`, `opencode.jsonc` and `.opencode/agents/` to the repository (the agents read them from the
-worktree). Edit the agents' instructions (the body of each `.md`) as you like; run `delege init` again after changing
-`delege.toml` — the front matter (permissions) is regenerated, the bodies are kept.
+Commit `delege.toml`, `opencode.jsonc`, `.opencode/agents/` and `AGENTS.md` to the repository. Edit the agents'
+instructions (the body of each `.md`) as you like; run `delege init` again after changing `delege.toml` — the front
+matter (permissions) is regenerated, the bodies are kept. `delege init` preserves an existing project-owned
+`AGENTS.md` and only creates it when missing.
 
 Give a task: label an issue `delegate` and name the agent with a label `agent:tests` or a body line `Agent: tests`;
 an optional `Area: tests/test_x.py` line narrows the agent's area. Write it as you would for a new colleague: small,
@@ -120,7 +123,7 @@ parallelism, the cloud switch, the models on / off and registry overrides.
 ```json
 {
   "hosts": [
-    {"name": "rtx", "slots": 1, "gpu_gb": 32},
+    {"name": "rtx", "slots": 1, "gpu_gb": 32, "engine": "opencode"},
     {"name": "box2", "ssh": "jm@box2.local", "repos": {"owner/myproject": "~/myproject"}, "slots": 1,
      "gpu_gb": 16, "python": ".venv/bin/python", "agents": ["tests", "lint", "docs"]}
   ],
@@ -139,6 +142,12 @@ machine, one slot. Keys live in the OS keyring (service `delege`) or `~/.config/
 usage counts in `~/.local/share/delege/usage.json`. `DELEGE_HOME` puts everything in one folder. FiFoo's old
 `~/.fifoo/delegate.json`, `cloud.json` and `secrets.json` are read once, as a migration, when there is no
 `config.json` yet.
+
+Set a host's `"engine": "aider"` to use Aider for its local-model tasks; optionally set `"aider": "/path/to/aider"`
+to choose its executable. Delege translates an `ollama/<model>` id to Aider's `ollama_chat/<model>` driver and
+passes the generated agent instructions. Cloud-model lanes continue to use OpenCode. Aider does not enforce
+OpenCode's per-agent read and tool permissions, so its final Delege diff check protects commits but does not provide
+the same read isolation. Use Aider only where that weaker boundary is acceptable.
 
 ### The settings page
 
