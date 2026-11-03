@@ -27,7 +27,18 @@ def issues_tasks(project: Project, gh=None) -> tuple[list[Task], list[str]]:
     if not project.repo:
         raise SystemExit(f"no GitHub repository: set [project] repo = \"owner/name\" in {project.config_path}")
     gh = gh or gh_api
-    items = gh(f"repos/{project.repo}/issues?labels={project.label}&state=open&per_page=100")
+    # GitHub caps a page at 100. Fetch until the last (short) page so projects with
+    # more than 100 delegated issues do not silently leave work out of the plan.
+    items = []
+    page = 1
+    while True:
+        batch = gh(f"repos/{project.repo}/issues?labels={project.label}&state=open&per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise SystemExit("gh api returned an unexpected issue list")
+        items.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
     tasks, notes = [], []
     for it in items:
         if "pull_request" in it:
@@ -46,6 +57,7 @@ def issue_comment(r: dict, base: str = "main") -> str:
     of the agent's own report — enough to review without the machine."""
     ok = r["status"] == "ok"
     head = ("✅ **Done**" if ok else f"❌ **{r['status']}**") + f" — `{r['branch']}` by the `{r['agent']}` agent " \
+        f"using `{r.get('engine', 'opencode')}` " \
         f"with `{r.get('model') or 'the local model'}` on {r.get('host')} in {r.get('seconds', 0)} s " \
         f"(base {str(r.get('base', ''))[:12]})."
     lines = [COMMENT_MARK, head, ""]

@@ -126,13 +126,20 @@ def test_run_distributed_over_fake_hosts(repo, fakes, monkeypatch):
     """Two ssh machines (fake ssh: each its own home) and this one: the base commit travels to each clone under a
     private ref, each runs its tasks in worktrees under its home, and the branches come back here."""
     hosts_dir = fakes["tmp"] / "hosts"
+    remote_python = fakes["bin"] / "remote-python"
+    remote_python.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "if sys.argv[1:3] == ['-m', 'pytest']:\n    sys.exit(0)\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
+    )
+    remote_python.chmod(0o755)
     for name in ("gpu1", "gpu2"):
         (hosts_dir / name).mkdir(parents=True)
         tgit("clone", "-q", str(repo), str(hosts_dir / name / "proj"), cwd=fakes["tmp"])
-    hosts = [{"name": "gpu1", "ssh": "gpu1", "slots": 2, "gpu_gb": 32, "python": sys.executable,
+    hosts = [{"name": "gpu1", "ssh": "gpu1", "slots": 2, "gpu_gb": 32, "python": str(remote_python),
               "opencode": fakes["opencode"]},
              {"name": "gpu2", "ssh": "gpu2", "repos": {"o/r": "~/proj"}, "slots": 2, "gpu_gb": 32,
-              "python": sys.executable, "opencode": fakes["opencode"]}]
+              "python": str(remote_python), "opencode": fakes["opencode"]}]
     cfg = machine_config(fakes, repo, hosts=hosts, parallel=3)
     (repo / "NEW.md").write_text("new\n")
     tgit("add", "-A", cwd=repo)
@@ -140,7 +147,7 @@ def test_run_distributed_over_fake_hosts(repo, fakes, monkeypatch):
     monkeypatch.setenv("FAKE_WRITE", json.dumps({"tests/test_new.py": "def test_ok():\n    assert True\n"}))
     tasks = [Task(f"r{i}", "tests", f"tests {i}") for i in range(3)]
     results = Delegator(cfg, load(repo), **quiet).run(tasks)
-    assert [r["status"] for r in results] == ["ok"] * 3, results
+    assert [r["status"] for r in results] == ["ok"] * 3, [(r["status"], r.get("proof")) for r in results]
     assert {r["host"] for r in results} == {"gpu1", "gpu2"}
     for r in results:
         assert "def test_ok" in tgit("show", f"{r['branch']}:tests/test_new.py", cwd=repo)
@@ -184,6 +191,23 @@ def test_push_only_checked_delegate_branches(repo, fakes, tmp_path, monkeypatch)
     machine_config(fakes, repo)
     monkeypatch.chdir(repo)
     assert cli.main(["push", "delegate/1-tests", "delegate/2-tests"]) == 1
+
+
+def test_run_aider_uses_local_ollama_and_leaves_commit_to_delege(repo, fakes, monkeypatch):
+    cfg = machine_config(
+        fakes, repo,
+        hosts=[{"name": "local", "engine": "aider", "aider": fakes["aider"], "python": sys.executable}],
+        model="ollama/qwen3-coder:30b",
+        identity={"name": "Owner", "email": "owner@example.org"},
+    )
+    monkeypatch.setenv("FAKE_WRITE", json.dumps({"README.md": "Updated by Aider.\n"}))
+    [result] = Delegator(cfg, load(repo), **quiet).run([Task("aider-docs", "docs", "Update the README")])
+    assert result["status"] == "ok" and result["engine"] == "aider"
+    assert result["proof"] == []
+    record = json.loads(fakes["log"].read_text())
+    assert "--no-auto-commits" in record["args"] and "--no-suggest-shell-commands" in record["args"]
+    assert record["args"][record["args"].index("--model") + 1] == "ollama_chat/qwen3-coder:30b"
+    assert tgit("log", "-1", "--format=%s", result["branch"], cwd=repo).startswith("delegate: Update the README")
 
 
 def test_run_refuses_opencode_1(repo, fakes, monkeypatch):

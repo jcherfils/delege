@@ -6,12 +6,12 @@ overrides. Nothing project-specific lives here (that is ``delege.toml`` in each 
 
     {
       "hosts": [
-        {"name": "rtx", "slots": 1, "gpu_gb": 32},
+        {"name": "rtx", "slots": 1, "gpu_gb": 32, "engine": "opencode"},
         {"name": "box2", "ssh": "jm@box2.local", "repos": {"owner/project": "~/project"}, "slots": 1, "gpu_gb": 16,
          "python": ".venv/bin/python", "agents": ["tests", "lint", "docs"]}
       ],
       "identity": {"name": "OpenCode", "email": "opencode@localhost"},
-      "model": null,                     // null: the model of the project's opencode.jsonc; "ollama/<name>": --model
+      "model": null,                     // null: project default; "ollama/<name>": the local model
       "timeout_min": 60,
       "parallel": 1,                     // tasks at once over all machines (one by one by default)
       "cloud": false,                    // the free hosted models too (delege run --cloud, or the settings page)
@@ -35,7 +35,8 @@ from .util import read_json, write_json
 DEFAULT_IDENTITY = {"name": "OpenCode", "email": "opencode@localhost"}
 OLLAMA_URL = "http://localhost:11434"               # each machine's own Ollama ("ollama_url")
 DEFAULT_SSH = ["ssh", "-o", "BatchMode=yes"]
-HOST_KEYS = ("name", "ssh", "repos", "slots", "gpu_gb", "python", "opencode", "agents", "worktrees")
+HOST_KEYS = ("name", "ssh", "repos", "slots", "gpu_gb", "python", "opencode", "aider", "engine", "agents",
+             "worktrees")
 
 
 @dataclass
@@ -47,6 +48,8 @@ class Host:
     gpu_gb: float = 0.0               # GPU memory, the weight of the plan (0: CPU only)
     python: str = "python"
     opencode: str = "opencode"
+    aider: str = "aider"
+    engine: str = "opencode"          # local task engine: opencode or aider; hosted lanes use OpenCode
     agents: list[str] | None = None   # only these agents (None: all)
     worktrees: str = ""
     repo: str = ""                    # resolved for the current project (``clone_of``)
@@ -68,7 +71,7 @@ class Host:
             d["ssh"] = self.ssh
         if self.repos:
             d["repos"] = dict(self.repos)
-        for k in ("slots", "gpu_gb", "python", "opencode", "agents"):
+        for k in ("slots", "gpu_gb", "python", "opencode", "aider", "engine", "agents"):
             v = getattr(self, k)
             if v != Host.__dataclass_fields__[k].default and v is not None:
                 d[k] = v
@@ -115,6 +118,8 @@ def host_from_json(h: dict) -> Host:
     if "repo" in h and "repos" not in h:          # an older single-project entry
         h.pop("repo")
     host = Host(**h)
+    if host.engine not in ("opencode", "aider"):
+        raise ValueError(f"host {host.name}: engine must be 'opencode' or 'aider'")
     host.repos = dict(host.repos) if isinstance(host.repos, dict) else {}
     return host
 
@@ -133,6 +138,8 @@ def load_config(path: Path | None = None, project_repo: str = "", project_name: 
         host = host_from_json(h)
         if host.local:
             host.opencode = find_opencode(host.opencode)
+            from .aider import find_aider
+            host.aider = find_aider(host.aider)
             host.repo = str(project_root) if project_root else host.repos.get(project_repo, "")
             host.worktrees = host.worktrees or str(paths.worktrees_dir())
             if "gpu_gb" not in h:

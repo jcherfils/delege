@@ -95,6 +95,8 @@ def test_init_writes_starter_files_and_keeps_bodies(tmp_path, monkeypatch):
     lines = []
     p = init.init(r, log=lines.append)
     assert (r / "delege.toml").exists() and (r / "opencode.jsonc").exists()
+    assert "Engineering standards" in (r / "AGENTS.md").read_text()
+    (r / "AGENTS.md").write_text("# Project-owned agent guidance\n")
     assert (r / ".github" / "ISSUE_TEMPLATE" / "delegate.md").exists()
     assert p.name == "newproj" and p.repo == "me/newproj" and set(p.agents) == {"tests", "fix", "lint", "docs"}
     assert 'repo = "me/newproj"' in (r / "delege.toml").read_text()
@@ -111,6 +113,7 @@ def test_init_writes_starter_files_and_keeps_bodies(tmp_path, monkeypatch):
     init.init(r, log=lines.append)
     head2, body2 = init.split_agent_file(f.read_text())
     assert body2 == "\nMy own instructions.\n" and head2 != head and '"*.md"' in head2
+    assert (r / "AGENTS.md").read_text() == "# Project-owned agent guidance\n"
     assert init.stale_agents(project.load(r)) == []
     assert any("kept" in ln and "delege.toml" in ln for ln in lines)
     (f.parent / "lint.md").unlink()

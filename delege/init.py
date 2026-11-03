@@ -9,6 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 from .project import Agent, Project, github_repo, load, repo_root
+from .util import atomic_write_bytes
 
 READ_ONLY_SHELL = ("git status *", "git diff *", "git log *", "git show *", "ls *", "grep *", "rg *", "wc *",
                    "cat *", "head *", "tail *", "find *")
@@ -258,9 +259,9 @@ def template_dir() -> Path:
 
 
 def init(root: Path | str = ".", force: bool = False, log=print) -> Project:
-    """Writes the starter files that are missing (``delege.toml`` rendered for this repository; ``opencode.jsonc``
-    and the issue template copied from ``template/``), then the agents' files from the loaded ``delege.toml``
-    (front matter always regenerated, bodies kept). ``force`` rewrites ``delege.toml`` and ``opencode.jsonc``."""
+    """Writes missing starter files (``delege.toml``, ``opencode.jsonc``, the issue template and ``AGENTS.md``),
+    then the agents' files from the loaded ``delege.toml`` (front matter always regenerated, bodies kept).
+    ``force`` rewrites ``delege.toml`` and ``opencode.jsonc`` but preserves an existing ``AGENTS.md``."""
     root = repo_root(root)
     toml = root / "delege.toml"
     if force or not toml.exists():
@@ -275,6 +276,13 @@ def init(root: Path | str = ".", force: bool = False, log=print) -> Project:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, dst)
             log(f"wrote {dst}")
+    # AGENTS.md may already contain project-owned instructions; never replace it, even with --force.
+    src, dst = template_dir() / "AGENTS.md", root / "AGENTS.md"
+    if not dst.exists():
+        atomic_write_bytes(dst, src.read_bytes())
+        log(f"wrote {dst}")
+    else:
+        log(f"kept {dst}")
     project = load(root)
     for p in write_agents(project):
         log(f"wrote {p}")

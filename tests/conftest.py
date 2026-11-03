@@ -144,6 +144,21 @@ else:
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
 """
 
+FAKE_AIDER = """#!{py}
+import json, os, sys
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("Aider v0.90.0")
+    sys.exit(0)
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write(json.dumps({{"engine": "aider", "cwd": os.getcwd(), "args": args}}) + "\\n")
+for path, text in json.loads(os.environ.get("FAKE_WRITE", "{{}}")).items():
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+print("Aider task complete")
+"""
+
 FAKE_SSH = """#!/bin/bash
 # fake ssh: [-o OPT]... HOST COMMAND — runs COMMAND in $FAKE_HOSTS/HOST (its home)
 while [[ "$1" == -* ]]; do shift 2; done
@@ -179,11 +194,13 @@ def fakes(tmp_path, monkeypatch):
     b.mkdir()
     oc = b / "opencode"
     oc.write_text(FAKE_OPENCODE.format(py=sys.executable))
+    aider = b / "aider"
+    aider.write_text(FAKE_AIDER.format(py=sys.executable))
     ssh = b / "fake-ssh"
     ssh.write_text(FAKE_SSH)
     gh = b / "gh"
     gh.write_text(FAKE_GH.format(py=sys.executable))
-    for f in (oc, ssh, gh):
+    for f in (oc, aider, ssh, gh):
         f.chmod(0o755)
     log = tmp_path / "opencode.log"
     monkeypatch.setenv("FAKE_LOG", str(log))
@@ -191,7 +208,8 @@ def fakes(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_HOSTS", str(tmp_path / "hosts"))
     for v in ("FAKE_WRITE", "FAKE_WRITE_BY_AGENT", "FAKE_RC", "FAKE_VERSION", "FAKE_429", "FAKE_MODELS"):
         monkeypatch.delenv(v, raising=False)
-    return {"opencode": str(oc), "ssh": str(ssh), "gh": str(gh), "bin": b, "log": log, "tmp": tmp_path}
+    return {"opencode": str(oc), "aider": str(aider), "ssh": str(ssh), "gh": str(gh), "bin": b,
+            "log": log, "tmp": tmp_path}
 
 
 def machine_config(fakes, repo, hosts=None, **kw) -> dict:

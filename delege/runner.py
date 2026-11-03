@@ -1,6 +1,5 @@
-"""Running the tasks: one git worktree and one ``delegate/<id>-<agent>`` branch per task, on this machine or over
-ssh, ``opencode run --standalone`` headless inside the worktree, then the diff guard, the proofs, the commit, the
-branch brought back here. Cloud mode: one lane per usable hosted model next to the local ones."""
+"""Running tasks in isolated Git worktrees with OpenCode or Aider, then checking diffs, running proofs and
+committing branches. Cloud mode adds a lane per usable hosted model alongside local-model lanes."""
 from __future__ import annotations
 
 import os
@@ -13,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import cloud
+from .aider import aider_argv
 from .checks import task_violations
 from .machine import Host, Lane, usable_models
 from .opencode import OPENCODE_CONFIG, OPENCODE_INSTALL, opencode_argv, parse_json_output, version_problem, \
@@ -94,6 +94,7 @@ class Delegator:
         self.base_sent: set[str] = set()
         self.resolved: set[str] = set()
         self.opencode_ok: dict[str, str | None] = {}  # host → None (OpenCode 2) or the problem
+        self.aider_ok: dict[str, str | None] = {}
         self.git_ssh = {"GIT_SSH_COMMAND": shlex.join(cfg["ssh"])}
         self.usage = cloud.Usage(Path(cfg["usage_path"]) if cfg.get("usage_path") else None)
         try:
@@ -120,14 +121,20 @@ class Delegator:
         with self.host_locks[h.name]:
             if h.name in self.resolved:
                 return
-            out = sh(["sh", "-c", 'echo "$HOME"; command -v opencode || true'], cwd=".", check=True).stdout.split("\n")
+            out = sh(["sh", "-c", 'echo "$HOME"; command -v opencode || true; command -v aider || true'],
+                     cwd=".", check=True).stdout.split("\n")
             home, found = out[0].strip(), (out[1].strip() if len(out) > 1 else "")
+            aider_found = out[2].strip() if len(out) > 2 else ""
             h.repo = h.repo if h.repo.startswith("/") else f"{home}/{h.repo}"
             h.worktrees = h.worktrees if h.worktrees.startswith("/") else f"{home}/{h.worktrees}"
             if h.opencode.startswith("~/"):
                 h.opencode = f"{home}/{h.opencode[2:]}"
             elif h.opencode == "opencode" and not found:
                 h.opencode = f"{home}/.opencode/bin/opencode"   # OpenCode 2's installer; ssh does not read ~/.bashrc
+            if h.aider.startswith("~/"):
+                h.aider = f"{home}/{h.aider[2:]}"
+            if h.aider == "aider" and aider_found:
+                h.aider = aider_found
             self.resolved.add(h.name)
 
     def _check_opencode(self, sh: Shell, h: Host):
@@ -142,6 +149,19 @@ class Delegator:
                     self.opencode_ok[h.name] = f"opencode not found on {h.name} ({e}) — install: {OPENCODE_INSTALL}"
             if self.opencode_ok[h.name]:
                 raise RuntimeError(self.opencode_ok[h.name])
+
+    def _check_aider(self, sh: Shell, h: Host):
+        """Aider is an optional local engine; any installed version with the supported CLI is accepted."""
+        with self.host_locks[h.name]:
+            if h.name not in self.aider_ok:
+                try:
+                    r = sh([h.aider, "--version"], cwd=h.repo, timeout=30)
+                    self.aider_ok[h.name] = None if r.returncode == 0 else (
+                        f"aider --version failed on {h.name}: {(r.stderr or r.stdout).strip()[-300:]}")
+                except (OSError, subprocess.SubprocessError) as e:
+                    self.aider_ok[h.name] = f"aider not found on {h.name} ({e}) — install: python -m pip install aider-chat"
+            if self.aider_ok[h.name]:
+                raise RuntimeError(self.aider_ok[h.name])
 
     def reachable_hosts(self) -> list[Host]:
         """The machines that answer now: local ones always, ssh ones that connect within 8 s. Unreachable ones are
@@ -172,13 +192,15 @@ class Delegator:
         return res
 
     def _model_name(self, model: str | None) -> str:
-        return model or self.cfg.get("model") or self.default_model or "opencode.jsonc model"
+        return model or self.cfg.get("model") or self.default_model or "project default model"
 
     def _run_task(self, task: Task, h: Host, model: str | None = None) -> dict:
         """``model``: a hosted model of the pool (``provider/model``, run here with ``--format json``, the
         worktree's config allowing its provider, the keys in the environment); None: the host's local model."""
         hosted = bool(model) and not cloud.model(model).local
+        engine = "opencode" if hosted else h.engine
         res = {"task": task.id, "agent": task.agent, "title": task.title, "issue": task.issue, "host": h.name,
+               "engine": engine,
                "model": self._model_name(model), "branch": task.branch, "base": self.base_sha, "files": [],
                "violations": [], "proof": []}
         if git("branch", "--list", task.branch, cwd=self.repo_dir):
@@ -188,7 +210,10 @@ class Delegator:
         try:
             if not h.local:
                 self._resolve(sh, h)
-            self._check_opencode(sh, h)
+            if engine == "aider":
+                self._check_aider(sh, h)
+            else:
+                self._check_opencode(sh, h)
             if not h.local:
                 self._send_base(h)
             wt = f"{h.worktrees}/{task.branch.replace('/', '_')}"
@@ -205,13 +230,28 @@ class Delegator:
                 env = cloud.key_env()
             py = host_python(h)
             env = {**(env or {}), **python_env(py, wt, h.local)}           # the agent's `python` = the host's, on this code
-            argv = opencode_argv(h.opencode, task.agent, prompt(task, self.project), model or self.cfg.get("model"),
-                                 json_output=hosted)
+            task_prompt = prompt(task, self.project)
+            if engine == "aider":
+                aider_model_id = model or self.cfg.get("model") or self.default_model
+                if not aider_model_id or not aider_model_id.startswith(("ollama/", "ollama_chat/")):
+                    raise RuntimeError("the Aider engine currently requires a local Ollama model")
+                if h.local:
+                    env["OLLAMA_API_BASE"] = self.cfg.get("ollama_url") or "http://localhost:11434"
+                from .init import split_agent_file
+                agent_file = self.project.agents_dir / f"{task.agent}.md"
+                if agent_file.exists():
+                    instructions = split_agent_file(agent_file.read_text())[1].strip()
+                    if instructions:
+                        task_prompt += "\n\nInstructions for this agent:\n" + instructions
+                argv = aider_argv(h.aider, task_prompt, aider_model_id)
+            else:
+                argv = opencode_argv(h.opencode, task.agent, task_prompt, model or self.cfg.get("model"),
+                                     json_output=hosted)
             try:
                 r = sh(argv, cwd=wt, timeout=self.cfg["timeout_min"] * 60, env=env)
-                res["opencode_rc"], out = r.returncode, r.stdout + "\n" + r.stderr
+                res["agent_rc"], out = r.returncode, r.stdout + "\n" + r.stderr
             except subprocess.TimeoutExpired:
-                res["opencode_rc"], out = -1, f"timeout after {self.cfg['timeout_min']} min"
+                res["agent_rc"], out = -1, f"timeout after {self.cfg['timeout_min']} min"
             if hosted:
                 ev = parse_json_output(out)
                 res["tokens"] = {"input": ev["input"], "output": ev["output"], "steps": ev["steps"]}
@@ -219,7 +259,7 @@ class Delegator:
                 res["output"] = tail(ev["text"] + ("\n" + ev["error"] if ev["error"] else ""), 80)
                 (Path(wt) / OPENCODE_CONFIG).unlink(missing_ok=True)                  # delege's own file:
                 sh(["git", "checkout", "--quiet", "--", OPENCODE_CONFIG], cwd=wt)      # back to the base commit's
-                if res["opencode_rc"] != 0 and cloud.looks_rate_limited(ev["error"] or out[-2000:], ev["status"]):
+                if res["agent_rc"] != 0 and cloud.looks_rate_limited(ev["error"] or out[-2000:], ev["status"]):
                     res["rate_limited"] = ev["error"] or f"HTTP {ev['status']}"
                     self._drop(sh, h, wt, task.branch)
                     return {**res, "status": "failed",
@@ -233,8 +273,8 @@ class Delegator:
             if made:
                 res["violations"].append("the agent committed by itself (it must not)")
             res["violations"] += task_violations(files, task, self.project)
-            if res["opencode_rc"] != 0:
-                return {**res, "status": "failed", "note": "opencode did not finish; worktree kept for a look"}
+            if res["agent_rc"] != 0:
+                return {**res, "status": "failed", "note": f"{engine} did not finish; worktree kept for a look"}
             if res["violations"]:
                 return {**res, "status": "refused", "note": "nothing committed; worktree kept for a look"}
             if not files:
@@ -272,8 +312,10 @@ class Delegator:
     def _message(self, task: Task, h: Host, res: dict) -> str:
         ref = f", #{task.issue}" if task.issue else ""
         proof = "; ".join(f"{p['cmd']} → {'ok' if p['rc'] == 0 else 'FAILED'}" for p in res["proof"]) or "none"
+        engine = {"opencode": "OpenCode", "aider": "Aider"}.get(res.get("engine", h.engine), res.get("engine"))
         lines = [f"delegate: {task.title[:60]} ({task.agent}{ref})", "",
-                 f"Made by OpenCode ({res.get('model') or self._model_name(None)}) on {h.name} with delege; "
+                 f"Made by {engine} ({res.get('model') or self._model_name(None)}) on {h.name} "
+                 "with delege; "
                  "not reviewed yet.", f"Proof: {proof}"]
         if task.issue:
             lines.append(f"Refs #{task.issue}")

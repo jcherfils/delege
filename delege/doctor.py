@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import urllib.error
@@ -168,6 +169,18 @@ class Doctor:
         return local[0].opencode if local else find_opencode()
 
     def check_opencode(self):
+        local = [h for h in self.cfg.get("hosts", []) if h.local]
+        if local and local[0].engine == "aider":
+            aider = local[0].aider
+            rc, text = self._run([aider, "--version"])
+            if rc:
+                self.report("FAIL", "aider", f"`{aider} --version` failed: {text[-200:]}",
+                            "python -m pip install aider-chat")
+            else:
+                self.report("ok", "aider", f"{text.splitlines()[0]} ({shutil.which(aider) or aider})")
+            self.report("warn", "aider", "Delege checks changed files, but Aider does not enforce OpenCode's read permissions")
+            if not self.cfg.get("cloud"):
+                return
         oc = self._opencode()
         rc, text = self._run([oc, "--version"])
         problem = version_problem(text if rc == 0 else "", "this machine")
@@ -322,6 +335,16 @@ class Doctor:
             if h.local:
                 continue
             ssh = [*self.cfg["ssh"], h.ssh]
+            if h.engine == "aider":
+                aider = shlex.quote(h.aider)
+                rc, out = self._run([*ssh, f"{aider} --version"], timeout=30)
+                if rc:
+                    self.report("FAIL", h.name, f"aider over ssh: {out[-200:] or rc}",
+                                f"on {h.name}: python -m pip install aider-chat")
+                else:
+                    self.report("ok", h.name, f"{out.splitlines()[0]} over ssh")
+                if not self.cfg.get("cloud"):
+                    continue
             oc = h.opencode if h.opencode != "opencode" else '"$(command -v opencode || echo ~/.opencode/bin/opencode)"'
             rc, out = self._run([*ssh, f"{oc} --version"], timeout=30)
             if rc:

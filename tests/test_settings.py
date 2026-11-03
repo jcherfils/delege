@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 import pytest
 
 from delege import cloud, paths
-from delege.settings import Server, Settings
+from delege.settings import MAX_REQUEST_BYTES, Server, Settings
 
 
 def test_settings_state_and_writes(monkeypatch):
@@ -42,11 +44,11 @@ def test_settings_state_and_writes(monkeypatch):
     s.set_option("parallel", 3)
     s.set_option("identity", {"name": "Me", "email": "me@x.org"})
     s.set_option("model", "ollama/other")
-    s.set_hosts([{"name": "rtx", "slots": 2, "gpu_gb": "32", "agents": "tests, docs", "ssh": ""},
+    s.set_hosts([{"name": "rtx", "engine": "aider", "slots": 2, "gpu_gb": "32", "agents": "tests, docs", "ssh": ""},
                  {"name": "box", "ssh": "jm@box", "repos": {"o/r": "~/r"}}])
     cfg = json.loads(paths.config_file().read_text())
     assert cfg["parallel"] == 3 and cfg["identity"] == {"name": "Me", "email": "me@x.org"} and cfg["model"] == "ollama/other"
-    assert cfg["hosts"] == [{"name": "rtx", "slots": 2, "gpu_gb": 32.0, "agents": ["tests", "docs"]},
+    assert cfg["hosts"] == [{"name": "rtx", "engine": "aider", "slots": 2, "gpu_gb": 32.0, "agents": ["tests", "docs"]},
                             {"name": "box", "ssh": "jm@box", "repos": {"o/r": "~/r"}}]
     assert cfg["cloud"] is True and cfg["enabled"] == {m: False}             # the other keys kept
     assert [h["name"] for h in s.state(with_ollama=False)["hosts"]] == ["rtx", "box"]
@@ -69,6 +71,15 @@ def _req(url, token=None, body=None, host=None):
             return r.status, r.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
+
+
+def _oversized_request_status(base, token):
+    port = int(urlsplit(base).port)
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
+        conn.sendall((f"POST /api/nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Token: {token}\r\n"
+                      f"Content-Length: {MAX_REQUEST_BYTES + 1}\r\nConnection: close\r\n\r\n").encode())
+        response = conn.recv(1024).decode()
+    return int(response.split(" ", 2)[1])
 
 
 def test_server_serves_localhost_only_with_a_token():
@@ -95,6 +106,9 @@ def test_server_serves_localhost_only_with_a_token():
         assert code == 200 and cloud.load_settings()["cloud"]
         assert _req(base + "/api/key", token=srv.token, body={"provider": "zz", "key": "k"})[0] == 400
         assert _req(base + "/api/nope", token=srv.token, body={})[0] == 400
+        code, body = _req(base + "/api/nope", token=srv.token, body=["not", "an", "object"])
+        assert code == 400 and "JSON object" in json.loads(body)["error"]
+        assert _oversized_request_status(base, srv.token) == 413
         assert _req(base + "/api/key", body={"provider": "groq", "key": "k2"})[0] == 403
         assert cloud.key_for("groq") == ("k", "secrets")
     finally:

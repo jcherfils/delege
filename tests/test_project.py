@@ -94,7 +94,7 @@ def test_tasks_from_issues_label_or_body_line(proj):
     ]
     seen = []
     tasks, notes = issues_tasks(proj, gh=lambda p: seen.append(p) or items)
-    assert seen == ["repos/o/r/issues?labels=delegate&state=open&per_page=100"]
+    assert seen == ["repos/o/r/issues?labels=delegate&state=open&per_page=100&page=1"]
     assert [(t.id, t.agent, t.area, t.issue) for t in tasks] == [
         ("12", "tests", "tests/test_budget.py", 12), ("13", "lint", "proj/ui/*", 13)]
     assert tasks[0].branch == "delegate/12-tests"
@@ -102,6 +102,24 @@ def test_tasks_from_issues_label_or_body_line(proj):
     proj.repo = ""
     with pytest.raises(SystemExit, match="no GitHub repository"):
         issues_tasks(proj, gh=lambda p: items)
+
+
+def test_issues_tasks_reads_all_pages(proj):
+    pages = {
+        1: [{"number": n, "title": f"Issue {n}", "labels": ["agent:fix"], "body": ""}
+            for n in range(1, 101)],
+        2: [{"number": 101, "title": "Issue 101", "labels": ["agent:fix"], "body": ""}],
+    }
+    seen = []
+
+    def gh(path):
+        seen.append(path)
+        return pages[int(path.rsplit("page=", 1)[1])]
+
+    tasks, notes = issues_tasks(proj, gh=gh)
+    assert len(tasks) == 101 and not notes
+    assert [t.id for t in tasks[-2:]] == ["100", "101"]
+    assert [p.rsplit("page=", 1)[1] for p in seen] == ["1", "2"]
 
 
 def test_task_file_text_and_json(tmp_path, proj):

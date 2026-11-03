@@ -20,7 +20,8 @@ def write_reports(results: list[dict], out: Path | None = None, base: str = "mai
     for r in results:
         lines = [f"# {r['branch']} — {r['status']}", "",
                  f"- Task: {r.get('title', '')}" + (f" (issue #{r['issue']})" if r.get("issue") else ""),
-                 f"- Agent: {r['agent']} · model: {r.get('model', '')} · machine: {r.get('host')} · "
+                 f"- Agent: {r['agent']} · engine: {r.get('engine', 'opencode')} · model: {r.get('model', '')} · "
+                 f"machine: {r.get('host')} · "
                  f"base: {str(r.get('base', ''))[:12]} · {r.get('seconds', 0)} s"]
         if r.get("note"):
             lines.append(f"- Note: {r['note']}")

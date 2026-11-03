@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, cloud, paths
+from .aider import aider_argv
 from .machine import load_config, usable_models
 from .opencode import find_opencode
 from .project import ConfigError, Project
@@ -15,7 +16,7 @@ from .project import load as load_project
 from .project import repo_root
 from .tasks import Task, file_tasks, prompt
 
-HELP = """delege: delegate small, well-scoped coding tasks to headless OpenCode 2 agents on a local model (Ollama) or
+HELP = """delege: delegate small, well-scoped coding tasks to local coding agents (OpenCode or Aider with Ollama) or
 free cloud models, spread over your machines.
 
   delege init                        # starter delege.toml, opencode.jsonc, agents (run again after editing the toml)
@@ -191,7 +192,11 @@ def main(argv=None) -> int:
             where = h.name if h else "— no machine can run it"
             print(f"{t.branch:40} {t.agent:12} on {where:12} {t.title[:60]}")
             if h and args.cmd == "run":
-                argv = opencode_argv(h.opencode, t.agent, prompt(t, project), cfg["model"])
+                if h.engine == "aider":
+                    model = cfg.get("model") or d.default_model
+                    argv = aider_argv(h.aider, prompt(t, project), model)
+                else:
+                    argv = opencode_argv(h.opencode, t.agent, prompt(t, project), cfg["model"])
                 print("    " + shlex.join([*argv[:-1], argv[-1][:120] + "…"]))
         return 0
     if args.parallel:
