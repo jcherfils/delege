@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -34,13 +35,32 @@ class Shell:
             r = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
                                env={**os.environ, **(env or {})})
         else:
-            pre = " ".join(f"{k}={shlex.quote(v)}" for k, v in (env or {}).items())
+            pre = " ".join(f'{k}="{v}"' if v.endswith("$PATH") and '"' not in v else f"{k}={shlex.quote(v)}"
+                           for k, v in (env or {}).items())    # PATH=<folder>:$PATH expands on the host
             cmd = f"cd {shlex.quote(cwd)} && {pre + ' ' if pre else ''}{shlex.join(argv)}"
             r = subprocess.run([*self.ssh, self.host.ssh, cmd], capture_output=True, text=True, timeout=timeout)
         if check and r.returncode:
             err = (r.stderr or r.stdout)[-800:]
             raise RuntimeError(f"{self.host.name}: {shlex.join(argv)} → {r.returncode}: {err}")
         return r
+
+
+def host_python(h) -> str:
+    """The Python of a host's tests: its ``python`` setting; on this machine the default ``python`` is the Python
+    delege runs in (it has the project installed — Debian has no ``python`` command, only ``python3``)."""
+    if h.local and h.python in ("", "python"):
+        return sys.executable
+    return h.python
+
+
+def python_env(py: str, worktree: str, local: bool) -> dict:
+    """Environment for the agent and the proofs: ``python`` / ``pytest`` resolve to the host's Python (its folder first
+    on PATH) and imports come from the task's worktree, not from an editable install of the main checkout."""
+    env = {"PYTHONPATH": worktree, "PYTHONDONTWRITEBYTECODE": "1"}
+    folder = os.path.dirname(py)
+    if folder:
+        env["PATH"] = folder + os.pathsep + (os.environ.get("PATH", "") if local else "$PATH")
+    return env
 
 
 def git(*args, cwd, check=True, env=None) -> str:
@@ -183,6 +203,8 @@ class Delegator:
                     raise RuntimeError(f"{model}: no declared free limit — refused (never a paid path)")
                 write_task_config(Path(wt), ["ollama", cloud.model(model).provider])
                 env = cloud.key_env()
+            py = host_python(h)
+            env = {**(env or {}), **python_env(py, wt, h.local)}           # the agent's `python` = the host's, on this code
             argv = opencode_argv(h.opencode, task.agent, prompt(task, self.project), model or self.cfg.get("model"),
                                  json_output=hosted)
             try:
@@ -219,8 +241,8 @@ class Delegator:
                 self._drop(sh, h, wt, task.branch)
                 return {**res, "status": "no-change"}
             ok = True
-            for cmd in proof_commands(self.project.agents[task.agent], files, task.issue, h.python):
-                p = sh(cmd, cwd=wt, timeout=1800, env={"PYTHONDONTWRITEBYTECODE": "1"})
+            for cmd in proof_commands(self.project.agents[task.agent], files, task.issue, py):
+                p = sh(cmd, cwd=wt, timeout=1800, env={"PYTHONDONTWRITEBYTECODE": "1", **python_env(py, wt, h.local)})
                 res["proof"].append({"cmd": shlex.join(cmd), "rc": p.returncode, "out": tail(p.stdout + p.stderr, 25)})
                 ok &= p.returncode == 0
             ident = self.cfg["identity"]

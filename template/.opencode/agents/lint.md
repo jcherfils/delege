@@ -23,6 +23,10 @@ permissions:
   - {action: shell, resource: "find *", effect: allow}
   - {action: shell, resource: "python -m pytest *", effect: allow}
   - {action: shell, resource: "ruff check *", effect: allow}
+  - {action: shell, resource: "python3 -m pytest *", effect: allow}
+  - {action: shell, resource: "pytest *", effect: allow}
+  - {action: shell, resource: "python -m ruff check *", effect: allow}
+  - {action: shell, resource: "python3 -m ruff check *", effect: allow}
   - {action: shell, resource: "git push *", effect: deny}
   - {action: shell, resource: "git commit *", effect: deny}
   - {action: shell, resource: "git reset *", effect: deny}

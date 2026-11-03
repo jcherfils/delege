@@ -139,6 +139,7 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 MODELS: dict[str, Model] = {m.id: m for m in (
+    Model("ollama/qwen3:14b", "Qwen3 14B (local)", Limits(source="local: no limit"), strength=1, context=40960),
     Model("ollama/qwen3-coder:30b", "Qwen3-Coder 30B-A3B (local)", Limits(source="local: no limit"), strength=2,
           context=65536),
     # OpenCode's free models (https://opencode.ai/docs/zen, 2026-11-02)

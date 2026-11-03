@@ -136,7 +136,7 @@ def test_opencode2_config_is_local_ollama_only(tmp_path):
     provider, model = cfg["model"].split("/", 1)
     ollama = cfg["providers"]["ollama"]
     assert provider == "ollama" and model in ollama["models"]
-    assert ollama["models"][model]["limit"]["context"] >= opencode.MIN_CONTEXT
+    assert ollama["models"][model]["limit"]["context"] >= 32768
     assert ollama["settings"]["baseURL"] == "http://localhost:11434/v1"
     assert cfg["update"] == "disable" and cfg["agents"]["title"]["model"] == cfg["model"]
     pol = cfg["policies"]
@@ -159,7 +159,7 @@ def test_opencode2_config_is_local_ollama_only(tmp_path):
     (wt / "opencode.jsonc").write_text((ROOT / "template" / "opencode.jsonc").read_text())
     p = opencode.write_task_config(wt, ["ollama", "openrouter"])
     c = read_jsonc(p)
-    assert c["model"] == "ollama/qwen3-coder:30b" and "$schema" not in c
+    assert c["model"] == "ollama/qwen3:14b" and "$schema" not in c
     assert decide(c["policies"], "provider.use", "openrouter", "allow") == "allow"
     assert decide(c["policies"], "provider.use", "google", "allow") == "deny"
     assert decide(c["permissions"], "shell", "git push") == "deny"

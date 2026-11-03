@@ -29,7 +29,7 @@ def test_registry_only_free_tiers_with_limits_and_policies():
             assert p.key_env and p.key_url and p.base_url.startswith("https://"), m.id
     assert not cloud.model("acme/paid-model").free
     assert cloud.model("acme/paid-model").provider == "acme" and not cloud.model("acme/paid-model").local
-    assert cloud.PROVIDERS["ollama"].local and cloud.MODELS["ollama/qwen3-coder:30b"].free
+    assert cloud.PROVIDERS["ollama"].local and cloud.MODELS["ollama/qwen3:14b"].free
     assert not cloud.enabled(cloud.MODELS["google/gemini-2.5-flash"], {"models": {}})
     assert cloud.enabled(cloud.MODELS["groq/openai/gpt-oss-120b"], {"models": {}})
     assert cloud.enabled(cloud.MODELS["google/gemini-2.5-flash"], {"models": {"google/gemini-2.5-flash": True}})
@@ -237,7 +237,7 @@ def test_model_pool_only_declared_free_limits():
 
 def test_models_command_lists_usable_models(repo, fakes, monkeypatch, capsys):
     cfg = machine_config(fakes, repo)
-    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3-coder:30b,groq/openai/gpt-oss-120b,groq/openai/gpt-oss-20b,"
+    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3:14b,groq/openai/gpt-oss-120b,groq/openai/gpt-oss-20b,"
                                       "google/gemini-2.5-flash")
     monkeypatch.setenv("GROQ_API_KEY", "gsk")
     cloud.set_key("google", "g")

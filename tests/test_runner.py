@@ -277,7 +277,7 @@ def test_run_end_to_end_through_the_cli(repo, fakes, monkeypatch, capsys):
 # ------------------------------------------------------------------ cloud lanes
 def test_run_cloud_spreads_tasks_over_usable_models(repo, fakes, monkeypatch):
     cfg = machine_config(fakes, repo, cloud=True, probe=False)
-    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3-coder:30b,groq/openai/gpt-oss-120b,groq/openai/gpt-oss-20b")
+    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3:14b,groq/openai/gpt-oss-120b,groq/openai/gpt-oss-20b")
     cloud.set_key("groq", "gsk_secret")
     peak, busy, lock = [0], [0], threading.Lock()
     real = Delegator.run_task
@@ -307,7 +307,7 @@ def test_run_cloud_spreads_tasks_over_usable_models(repo, fakes, monkeypatch):
     assert {r["status"] for r in results} <= {"ok", "proof-failed"}, [(r["status"], r.get("note")) for r in results]
     assert by["2"]["model"] == "groq/openai/gpt-oss-120b"                      # strong → the strongest (3)
     models = {r["model"] for r in results}
-    assert "groq/openai/gpt-oss-20b" in models and "ollama/qwen3-coder:30b" in models
+    assert "groq/openai/gpt-oss-20b" in models and "ollama/qwen3:14b" in models
     log = [json.loads(x) for x in fakes["log"].read_text().splitlines()]
     hosted = [e for e in log if e["model"] and e["model"].startswith("groq/")]
     assert hosted and all(e["keys"].get("GROQ_API_KEY") == "gsk_secret" for e in hosted)
@@ -329,7 +329,7 @@ def test_run_cloud_benches_a_rate_limited_model_and_retries(repo, fakes, monkeyp
     from delege import opencode
     cfg = machine_config(fakes, repo, cloud=True, probe=False, models=[{"id": "groq/openai/gpt-oss-20b", "use": False},
                                                                       {"id": "groq/qwen/qwen3.8-27b", "use": False}])
-    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3-coder:30b,groq/openai/gpt-oss-120b,"
+    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3:14b,groq/openai/gpt-oss-120b,"
                                       "openrouter/poolside/laguna-s-2.1:free")
     cloud.set_key("groq", "a")
     cloud.set_key("openrouter", "b")
@@ -372,7 +372,7 @@ def test_run_cloud_benches_a_rate_limited_model_and_retries(repo, fakes, monkeyp
 
 def test_dry_run_cloud_shows_lanes(repo, fakes, monkeypatch, capsys):
     machine_config(fakes, repo)
-    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3-coder:30b,groq/openai/gpt-oss-20b")
+    monkeypatch.setenv("FAKE_MODELS", "ollama/qwen3:14b,groq/openai/gpt-oss-20b")
     cloud.set_key("groq", "k")
     tasks = fakes["tmp"] / "tasks.txt"
     tasks.write_text("docs: README rows\n")
@@ -381,3 +381,19 @@ def test_dry_run_cloud_shows_lanes(repo, fakes, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "cloud models on: 2 task(s) at once" in out and "groq/openai/gpt-oss-20b on local" in out
     assert not paths.worktrees_dir().exists() and "delegate/" not in tgit("branch", cwd=repo)
+
+
+def test_agents_and_proofs_use_the_hosts_python_on_the_worktree(tmp_path):
+    """Debian has no `python` command: on this machine the agent's and the proofs' `python` is the Python delege runs
+    in (its folder first on PATH), and imports come from the task's worktree, not an editable install."""
+    import sys
+
+    from delege import runner
+    from delege.machine import Host
+    here = Host(name="here")
+    assert runner.host_python(here) == sys.executable
+    env = runner.python_env(sys.executable, str(tmp_path), True)
+    assert env["PYTHONPATH"] == str(tmp_path) and env["PATH"].split(":")[0] == str(Path(sys.executable).parent)
+    far = Host(name="far", ssh="me@far", python="/opt/venv/bin/python")
+    assert runner.host_python(far) == "/opt/venv/bin/python"
+    assert runner.python_env(far.python, "/w", False)["PATH"] == "/opt/venv/bin:$PATH"

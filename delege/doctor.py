@@ -20,7 +20,7 @@ from .util import read_jsonc
 
 OLLAMA_FIX_CONTEXT = ('sudo systemctl edit ollama.service   # under [Service]: Environment="OLLAMA_CONTEXT_LENGTH=65536" '
                       '(+ OLLAMA_FLASH_ATTENTION=1, OLLAMA_KV_CACHE_TYPE=q8_0); then: sudo systemctl restart ollama')
-DEFAULT_MODEL = "ollama/qwen3-coder:30b"
+DEFAULT_MODEL = "ollama/qwen3:14b"
 
 
 def http_json(url: str, data=None, timeout: float = 10):
@@ -232,12 +232,13 @@ class Doctor:
             self.report("FAIL", "ollama", f"/api/show {name}: {e}", "sudo systemctl restart ollama")
             return
         native, num_ctx = model_context(show)
+        need = min(MIN_CONTEXT, native) if native else MIN_CONTEXT     # a smaller model: its whole context
         if native and native < MIN_CONTEXT:
-            self.report("FAIL", "model", f"{name}: its context is only {native} tokens (< {MIN_CONTEXT})",
-                        "pick a model with 64 K tokens of context or more")
-        elif num_ctx is not None and num_ctx < MIN_CONTEXT:
-            self.report("FAIL", "model", f"{name}: num_ctx {num_ctx} in its Modelfile (< {MIN_CONTEXT})",
-                        f"a Modelfile with PARAMETER num_ctx {MIN_CONTEXT} (ollama create), or another tag")
+            self.report("warn", "model", f"{name}: its context is {native} tokens (< {MIN_CONTEXT}): keep its "
+                        "tasks small", "a model with 64 K tokens of context for bigger tasks")
+        if num_ctx is not None and num_ctx < need:
+            self.report("FAIL", "model", f"{name}: num_ctx {num_ctx} in its Modelfile (< {need})",
+                        f"a Modelfile with PARAMETER num_ctx {need} (ollama create), or another tag")
         else:
             self.report("ok", "model", f"{name} in Ollama ({native or '?'} tokens of context natively"
                         + (f", num_ctx {num_ctx}" if num_ctx else "") + ")")
@@ -258,8 +259,8 @@ class Doctor:
         ctx = loaded.get("context_length")
         if not ctx:
             self.report("warn", "context", "this Ollama does not report the context in use", "ollama ps   (CONTEXT ≥ 65536)")
-        elif int(ctx) < MIN_CONTEXT:
-            self.report("FAIL", "context", f"{name} runs with {ctx} tokens of context (< {MIN_CONTEXT})", OLLAMA_FIX_CONTEXT)
+        elif int(ctx) < need:
+            self.report("FAIL", "context", f"{name} runs with {ctx} tokens of context (< {need})", OLLAMA_FIX_CONTEXT)
         else:
             self.report("ok", "context", f"{name} runs with {ctx} tokens of context")
         size, vram = int(loaded.get("size") or 0), int(loaded.get("size_vram") or 0)

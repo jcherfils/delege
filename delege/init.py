@@ -12,6 +12,10 @@ from .project import Agent, Project, github_repo, load, repo_root
 
 READ_ONLY_SHELL = ("git status *", "git diff *", "git log *", "git show *", "ls *", "grep *", "rg *", "wc *",
                    "cat *", "head *", "tail *", "find *")
+# a `python -m pytest *` rule also allows how agents write it (python3, pytest, xvfb-run …)
+PYTHON_ALIASES = {"python -m pytest *": ("python3 -m pytest *", "pytest *"),
+                  "xvfb-run -a python -m pytest *": ("xvfb-run -a python3 -m pytest *", "xvfb-run -a pytest *"),
+                  "ruff check *": ("python -m ruff check *", "python3 -m ruff check *")}
 DENIED_SHELL = ("git push *", "git commit *", "git reset *", "git checkout *", "git switch *", "git rebase *",
                 "git worktree *", "git stash *", "rm -rf *", "curl *", "wget *", "pip *", "uv *", "npm *", "sudo *")
 DENIED_ACTIONS = ("websearch", "external_directory", "subagent", "question", "skill", "execute",
@@ -121,6 +125,7 @@ def permissions(agent: Agent, project: Project) -> list[tuple[str, str, str]]:
     rules.append(("shell", "*", "deny"))
     rules += [("shell", c, "allow") for c in READ_ONLY_SHELL]
     rules += [("shell", c, "allow") for c in agent.shell]
+    rules += [("shell", a, "allow") for c in agent.shell for a in PYTHON_ALIASES.get(c, ())]
     rules += [("shell", c, "deny") for c in DENIED_SHELL]
     f = project.forbidden
     rules += [("read", f"*/{d}/*", "deny") for d in f.dir_names]

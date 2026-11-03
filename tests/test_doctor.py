@@ -36,8 +36,8 @@ class FakeOllama:
                 fake.calls.append(("GET", self.path))
                 size = 19_000_000_000
                 if self.path == "/api/tags":
-                    return self._send(200, {"models": [{"name": "qwen3-coder:30b"}] if fake.have else []})
-                models = [{"name": "qwen3-coder:30b", "model": "qwen3-coder:30b", "size": size,
+                    return self._send(200, {"models": [{"name": "qwen3:14b"}] if fake.have else []})
+                models = [{"name": "qwen3:14b", "model": "qwen3:14b", "size": size,
                            "size_vram": int(size * fake.share), "context_length": fake.ctx}] if fake.loaded else []
                 self._send(200, {"models": models})
 
@@ -83,7 +83,7 @@ def test_doctor_all_good(doctor_env):
     assert "ok    project" in out and "agents tests, fix, lint, docs, checks, screenshots" in out
     assert "ok    config" in out and "ok    opencode   opencode v2.1.4" in out and "ok    python" in out
     assert "OpenCode sees tests, fix, lint, docs, checks, screenshots" in out
-    assert "qwen3-coder:30b in Ollama (262144 tokens" in out
+    assert "qwen3:14b in Ollama (262144 tokens" in out
     assert "runs with 65536 tokens of context" in out and "100% GPU" in out
     assert ("POST", "/api/generate") in doctor_env["ollama"].calls
     assert "#72 docs, #71 lint, #70 tests" in out
@@ -106,7 +106,7 @@ def test_doctor_says_how_to_fix(doctor_env, monkeypatch):
     monkeypatch.setenv("FAKE_GH_AUTH", "1")
     o.have = False
     rc, out = _doctor(doctor_env)
-    assert rc == 1 and "fix: ollama pull qwen3-coder:30b" in out
+    assert rc == 1 and "fix: ollama pull qwen3:14b" in out
     o.close()
     rc, out = _doctor(doctor_env, load_model=False)
     assert "not reachable" in out and "fix: sudo systemctl enable --now ollama" in out

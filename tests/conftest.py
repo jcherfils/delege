@@ -114,7 +114,7 @@ if args[:2] == ["debug", "agents"]:
     print("\\n".join(["build  primary", "plan  primary"] + [n + "  all" for n in names]))
     sys.exit(0)
 if args == ["models"]:
-    print(os.environ.get("FAKE_MODELS", "ollama/qwen3-coder:30b").replace(",", "\\n"))
+    print(os.environ.get("FAKE_MODELS", "ollama/qwen3:14b").replace(",", "\\n"))
     sys.exit(0)
 assert args[:4] == ["run", "--standalone", "--agent", args[3]], args
 model = args[args.index("--model") + 1] if "--model" in args else None
